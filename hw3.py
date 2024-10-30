@@ -294,154 +294,106 @@ def readConfig(cfile):
 #    -1  0  1  2  3  4  5  6  7  8  9  10
 #     .  . |===================||====| .   <= days
 #
-def sim(cfile='hw3.cfg'):
-    # Specification: susceptible(i) returns True if and only if agent
-    # i is susceptible (state counter == -1 and neither vaccination or
-    # masking effective).
-    #
-    def susceptible(i):
-        return(pop[i]['state'] == -1 and not flip(pop[i]['vaccine']) and not flip(pop[i]['mask']))
+def sim(config):
+    # Default configuration
+    default_config = {
+        'N': 100, 'I': 1, 'm': 4, 'de': 3, 'di': 5,
+        'tpe': 0.01, 'tpi': 0.02, 'rp': 0.5,
+        'vp': 0.9, 'mp': 0.3, 'ap': 0.3, 'ip': 0.4,
+        'max': 100, 'verbose': False, 'seed': None
+    }
 
-    # Specification: exposed(i) returns True if and only if agent i is
-    # exposed (has state counter between di and di+de).
-    #
-    def exposed(i):
-        return(config['di'] < pop[i]['state'] <= config['di']+config['de'])
+    # Modified cast_value function
+    def cast_value(key, value):
+        if key == 'seed':
+            if value is None or value == '':
+                return None
+            else:
+                try:
+                    return int(value)
+                except ValueError:
+                    raise ValueError(f"Invalid value for {key}: {value}")
+        expected_type = type(default_config[key])
+        if expected_type == bool:
+            if isinstance(value, str):
+                return value.lower() == 'true'
+            return bool(value)
+        else:
+            return expected_type(value)
 
-    # Specification: infected(i) returns True if and only if agent i
-    # is exposed (has state counter between 0 and di).
-    #
-    def infected(i):
-        return(0 < pop[i]['state'] <= config['di'])
+    # Update config with defaults and cast values
+    for key in default_config:
+        if key in config:
+            try:
+                config[key] = cast_value(key, config[key])
+            except ValueError as e:
+                print(f"Invalid value for {key}: {config[key]}. Using default: {default_config[key]}")
+                config[key] = default_config[key]
+        else:
+            config[key] = default_config[key]
 
-    # Specification: infectious(i) returns True if and only if agent i
-    # is infectious (e.g., either infected or exposed) and not masked.
-    #
-    def infectious(i):
-        return(0 < pop[i]['state'] <= config['di']+config['de'] and not flip(pop[i]['mask']) and not flip(pop[i]['sociso']))
-
-    # Specification: recovered(i) returns True if and only if agent i
-    # is in the recovered state.
-    #
-    def recovered(i):
-        return(pop[i]['state'] == 0)
-
-    # Read the configuration file first.
-    config = readConfig(cfile)
-
-    # Set the seed; the default sets the seed to start time.
-    if 'seed' in config:
+    # Set the seed if provided
+    if config['seed'] is not None:
         seed(config['seed'])
+    else:
+        seed()
 
-    # Create agents: returns a tuple of agent records and a set of
-    # infected agent indexes into pop.
+    # Create agents
     pop, inf = newPop(config)
 
-    # Good to go, now run the simulation. We'll use totinf to keep
-    # track of all infection events.
-    totinf = len(inf)
-    # Similarly, we’ll use curve, a list, to keep track of how many
-    # infecteds there are each day, starting from day 0.
-    curve = [totinf]
+    # Define helper functions inside 'sim'
+    def susceptible(i):
+        return (pop[i]['state'] == -1 and not flip(pop[i]['vaccine']) and not flip(pop[i]['mask']))
 
-    # Run the simulation (i.e., keep looping) while there are
-    # infecteds remaining (that is, while curve[-1] > 0) or until you
-    # hit the failsafe number of rounds limit, max. 
+    def exposed(i):
+        return (config['di'] < pop[i]['state'] <= config['di'] + config['de'])
+
+    def infected(i):
+        return (0 < pop[i]['state'] <= config['di'])
+
+    def infectious(i):
+        return (0 < pop[i]['state'] <= config['di'] + config['de'] and not flip(pop[i]['mask']) and not flip(pop[i].get('sociso', 0)))
+
+    def recovered(i):
+        return (pop[i]['state'] == 0)
+
+    # Now, proceed with the rest of your simulation code
+    # ...
+
+    # Example of your simulation loop
+    totinf = len(inf)
+    curve = [totinf]
     rounds = 0
+
     while rounds < config['max']:
-        # Beginning-of-day agent status update: returns the number of
-        # active infections on the new day, which we append to the
-        # curve list.
         inf = update(pop, inf, config)
         curve.append(len(inf))
 
-        # If config['verbose'] is True, show user feedback.
         if config['verbose']:
-            print("Day {}: {} of {} agents infected.".format(len(curve)-1, curve[-1], len(pop)))
+            print("Day {}: {} of {} agents infected.".format(len(curve) - 1, curve[-1], len(pop)))
 
-        # Quit the simulation if there are no infections left.
         if curve[-1] == 0:
-            print("Pandemic extinguished: {} days, {} infecteds, attack rate is {:3.1f}%.".format(len(curve)-1, totinf, (100*totinf)/len(pop)))
+            if config['verbose']:
+                print("Pandemic extinguished.")
             break
 
-        # For each infected agent, sample the population to find who
-        # they mix with, and then flip a coin to determine if a new
-        # infection occurs.  For each new infection, update the
-        # appropriate agent's status as well as totinf, the total
-        # infection count.
         newinf = set()
         for i in inf:
-            # Generate a list encounters by random sampling
-            # without replacement (see Python documentation).
-            #
-            # TODO: here you will need to handle the case where there
-            # are subgroup mixing parameters. Depending on i's group,
-            # you will want to skew the selection of the
-            # randint(0,config['m']) interacting agents from the
-            # appropriate subgroups. It's a good chance to use
-            # binnedSample() again, with appropriate arguments.
-            if isinstance(config['N'], tuple):
-                num_int = randint(0, config['m'])
-                infected_agent_group = pop[i].get('type', 0)
+            num_interactions = randint(0, config['m'])
 
-                #mixing parameters for infected agent group
-                ms = config.get(infected_agent_group)
+            # For each interaction, determine if a new infection occurs
+            interactions = sample(range(len(pop)), num_interactions)
+            for j in interactions:
+                if infectious(i) and susceptible(j) and ((exposed(i) and flip(config['tpe'])) or (infected(i) and flip(config['tpi']))):
+                    totinf += 1
+                    pop[j]['state'] = config['di'] + config['de'] + 1
+                    if flip(config['ap']):
+                        pop[j]['sociso'] = 0
+                    else:
+                        pop[j]['sociso'] = flip(config['ip'])
+                    newinf.add(j)
 
-                if ms:
-                    interacting_agents = set()
-                    #get the number of agents to interact with
-                    for group, percent in enumerate(ms):
-                        num_agents = int(num_int * percent / 100)
-                        interacting_agents.update(binnedSample(num_agents, config['N'][group]))
-                    #remove the infected agent from the interacting agents
-                    for j in interacting_agents:
-                        if infectious(i) and susceptible(j) and ((exposed(i) and flip(config['tpe'])) or (infected(i) and flip(config['tpi']))):
-                            totinf += 1
-                            #update the agent's state
-                            pop[j]['state'] = config['di'] + config['de'] + 1
-                            pop[j]['sociso'] = 0 if flip(config['ap']) else (config['ip'])
-                            # If config['verbose'] is True, show user feedback.
-                            if config['verbose']:
-                                print("  Agent {} infected by agent {} [si={}].".format(j, i, pop[j]['sociso']))
-                            # Keep track of new infections
-                            newinf.add(j)
-        
-            else:
-                for j in sample(range(len(pop)), randint(0,config['m'])):
-
-                    # Is there a new infection? This depends on current
-                    # disease state as well as j's masking and vaccination
-                    # status and i's masking and social isolation status.
-                    if infectious(i) and susceptible(j) and ((exposed(i) and flip(config['tpe'])) or (infected(i) and flip(config['tpi']))):
-                        # Update totinf, the total infection event count.
-                        totinf = totinf+1
-                        pop[j]['state'] = config['di']+config['de']+1
-
-                        # Determine newly infected agent j's social
-                        # isolation, which will be used to determine how
-                        # effective an infectious agent he will be. This
-                        # mirrors what we did for initial infecteds in
-                        # newPop() but unfortunately I haven't got that
-                        # handy helper function available here! Since this
-                        # is the only place I use it within this funcion,
-                        # I'll just paste the guts of the helper function
-                        # in here directlyh.
-                        if flip(config['ap']):
-                            pop[j]['sociso'] = 0
-                        else:
-                            pop[j]['sociso'] = flip(config['ip'])
-
-                        # If config['verbose'] is True, show user feedback.
-                        if config['verbose']:
-                            print("  Agent {} infected by agent {} [si={}].".format(j, i, pop[j]['sociso']))
-                        # Keep track of new infections
-                        newinf.add(j)
-
-        # Add any new infecteds to infected set
         inf.update(newinf)
-        # Update failsafe simulation limit
-        rounds = rounds + 1
-    else:
-        print("Pandemic persists: {} days, {} infecteds, attack rate is {:3.1f}%.".format(len(curve)-1, totinf, (100*totinf)/len(pop)))
-    # Return simulation curve.
-    return(curve)
+        rounds += 1
+
+    return curve

@@ -1,14 +1,14 @@
 from hw3 import *
 import matplotlib.pyplot as plt
 
-if __name__ == '__main__':
-    infection_curve = sim('hw3.cfg')
+def main():
+    # Read the configuration file
+    config = readConfig('hw3.cfg')
+    # Run the simulation
+    infection_curve = sim(config)
     print("Infection Curve:", infection_curve)
 
-import matplotlib.pyplot as plt
-
-if __name__ == '__main__':
-    infection_curve = sim('hw3.cfg')
+    # Plot the infection curve
     days = range(len(infection_curve))
     plt.figure(figsize=(10, 6))
     plt.plot(days, infection_curve, marker='o')
@@ -17,3 +17,6 @@ if __name__ == '__main__':
     plt.ylabel('Number of Infections')
     plt.grid(True)
     plt.show()
+
+if __name__ == '__main__':
+    main()
