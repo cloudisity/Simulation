@@ -1,14 +1,29 @@
+// src/App.js
+
 import React, { useState } from 'react';
-import { Tooltip, Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
 import axios from 'axios';
 import {
-  Container, Grid, Paper, Typography, TextField, Button,
-  Checkbox, FormControlLabel, AppBar, Toolbar, CircularProgress,
+  Container, Grid, Paper, Typography, Button,
+  AppBar, Toolbar, CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material';
 import { PlayArrow } from '@mui/icons-material';
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend,
-} from 'recharts';
+import { styled } from '@mui/system';
+
+// Importing modular components
+import ParameterForm from './components/ParameterForm';
+import InfectionChart from './components/InfectionChart';
+import VerboseLogs from './components/VerboseLogs';
+
+const StyledAppBar = styled(AppBar)(({ theme }) => ({
+  backgroundColor: theme.palette.primary.main,
+}));
+
+const StyledFooter = styled('footer')(({ theme }) => ({
+  marginTop: theme.spacing(4),
+  padding: theme.spacing(2, 0),
+  textAlign: 'center',
+  backgroundColor: '#f5f5f5',
+}));
 
 function App() {
   // Initial default parameters for the simulation
@@ -51,12 +66,14 @@ function App() {
 
   // State to hold the infection curve data
   const [infectionCurve, setInfectionCurve] = useState([]);
-
-  // State to manage loading state
   const [loading, setLoading] = useState(false);
-
-  // State to manage About dialog
   const [aboutOpen, setAboutOpen] = useState(false);
+
+  // State to hold simulation summary data
+  const [summary, setSummary] = useState(null);
+
+  // State to hold verbose logs
+  const [verboseLogs, setVerboseLogs] = useState([]);
 
   // Functions to handle About dialog open/close
   const handleAboutOpen = () => {
@@ -68,19 +85,26 @@ function App() {
   };
 
   // Handle changes in the input fields
-  const handleChange = (e) => {
-    const { name, value, type, checked } = e.target;
-    let newValue = type === 'checkbox' ? checked : value;
+  const handleChange = (e, newValue) => {
+    const { name, value, type, checked } = e.target || {};
+    let updatedValue = newValue !== undefined ? newValue : type === 'checkbox' ? checked : value;
 
-    // Simple validation example: Ensure numerical values are non-negative
-    if (type === 'number' && newValue < 0) {
-      alert(`${name} cannot be negative.`);
-      return;
+    // Parsing numerical values appropriately
+    if (type === 'number') {
+      updatedValue = parseFloat(updatedValue);
+      if (isNaN(updatedValue)) {
+        alert(`${name} must be a valid number.`);
+        return;
+      }
+      if (updatedValue < 0) {
+        alert(`${name} cannot be negative.`);
+        return;
+      }
     }
 
     setParams((prevParams) => ({
       ...prevParams,
-      [name]: newValue,
+      [name]: updatedValue,
     }));
   };
 
@@ -88,25 +112,40 @@ function App() {
   const runSimulation = () => {
     setLoading(true);
 
-    // Prepare the config object by parsing parameter values to the correct data types
-    const config = {};
-    for (const key in params) {
-      let value = params[key];
-      if (typeof value === 'string' && value !== '') {
-        if (value.includes(',')) {
-          // Handle tuples (e.g., for subpopulations)
-          value = value.split(',').map((v) => parseFloat(v.trim()));
-        } else {
-          value = parseFloat(value);
-        }
-      }
-      config[key] = value;
-    }
+    // Prepare the config object by ensuring 'verbose' is a boolean
+    const config = { ...params, verbose: Boolean(params.verbose) };
+
+    // Debugging: Log the config being sent
+    console.log('Sending config to backend:', config);
 
     axios
       .post('http://localhost:5000/run_simulation', { config })
       .then((response) => {
-        setInfectionCurve(response.data.infection_curve);
+        // Debugging: Log the full response
+        console.log('Received response from backend:', response.data);
+
+        const curve = response.data.infection_curve || [];
+        setInfectionCurve(curve);
+
+        // Handle verbose logs
+        if (config.verbose) {
+          setVerboseLogs(response.data.verbose_logs || []);
+        } else {
+          setVerboseLogs([]);
+        }
+
+        // Calculate summary metrics
+        const peakInfections = curve.length > 0 ? Math.max(...curve) : 0;
+        const dayOfPeak = curve.length > 0 ? curve.indexOf(peakInfections) : 0;
+        const totalInfections = curve.reduce((sum, value) => sum + value, 0);
+        const percentageInfected = config.max > 0 ? ((totalInfections / (config.N * config.max)) * 100).toFixed(2) : '0.00';
+
+        setSummary({
+          peakInfections,
+          dayOfPeak,
+          totalInfections,
+          percentageInfected,
+        });
       })
       .catch((error) => {
         console.error('There was an error running the simulation!', error);
@@ -124,7 +163,7 @@ function App() {
   return (
     <>
       {/* Header */}
-      <AppBar position="static">
+      <StyledAppBar position="static">
         <Toolbar>
           <Typography variant="h6" style={{ flexGrow: 1 }}>
             Disease Simulation App
@@ -133,22 +172,21 @@ function App() {
             About
           </Button>
         </Toolbar>
-      </AppBar>
+      </StyledAppBar>
 
       {/* About Dialog */}
-      <Dialog open={aboutOpen} onClose={handleAboutClose}>
+      <Dialog open={aboutOpen} onClose={handleAboutClose} maxWidth="sm" fullWidth>
         <DialogTitle>About This Simulation</DialogTitle>
         <DialogContent dividers>
           <Typography gutterBottom>
             This simulation models the spread of a disease through a population using adjustable parameters.
           </Typography>
           <Typography gutterBottom>
-            You can change variables such as the initial number of infected individuals, transmission probabilities, recovery rates, and more to see how they affect the infection curve.
+            You can modify variables such as the initial number of infected individuals, transmission probabilities, recovery rates, and more to observe their effects on the infection curve.
           </Typography>
           <Typography gutterBottom>
             The purpose of this simulation is to provide insight into how diseases spread and the impact of different factors on an outbreak.
           </Typography>
-          {/* Add more content as needed */}
         </DialogContent>
         <DialogActions>
           <Button onClick={handleAboutClose} color="primary">
@@ -158,110 +196,37 @@ function App() {
       </Dialog>
 
       {/* Main Content */}
-      <Container maxWidth="md" style={{ marginTop: '20px' }}>
-        <Grid container spacing={2}>
+      <Container maxWidth="lg" style={{ marginTop: '40px', marginBottom: '40px' }}>
+        <Grid container spacing={4}>
           {/* Simulation Parameters Form */}
-          <Grid item xs={12} md={6}>
-            <Paper elevation={3} style={{ padding: '20px' }}>
-              <Typography variant="h6" gutterBottom>
-                Simulation Parameters
-              </Typography>
-              <Grid container spacing={2}>
-                {Object.keys(params).map((key) => (
-                  <Grid item xs={12} sm={6} key={key}>
-                    <Tooltip title={paramDescriptions[key] || ''} arrow>
-                      {typeof params[key] === 'boolean' ? (
-                        <FormControlLabel
-                          control={
-                            <Checkbox
-                              checked={params[key]}
-                              onChange={handleChange}
-                              name={key}
-                            />
-                          }
-                          label={key}
-                        />
-                      ) : (
-                        <TextField
-                          label={key}
-                          name={key}
-                          value={params[key]}
-                          onChange={handleChange}
-                          type="number"
-                          InputProps={{ inputProps: { step: 'any' } }}
-                          variant="outlined"
-                          size="small"
-                          fullWidth
-                        />
-                      )}
-                    </Tooltip>
-                  </Grid>
-                ))}
-              </Grid>
-              <Button
-                variant="contained"
-                color="primary"
-                onClick={runSimulation}
-                disabled={loading}
-                startIcon={<PlayArrow />}
-                style={{ marginTop: '20px' }}
-                fullWidth
-              >
-                {loading ? 'Running Simulation...' : 'Run Simulation'}
-              </Button>
-              {loading && <CircularProgress style={{ marginTop: '10px' }} />}
-            </Paper>
+          <Grid item xs={12} md={4}>
+            <ParameterForm
+              params={params}
+              handleChange={handleChange}
+              runSimulation={runSimulation}
+              loading={loading}
+              paramDescriptions={paramDescriptions}
+            />
           </Grid>
 
-          {/* Infection Curve Chart */}
-          <Grid item xs={12} md={6}>
-            {infectionCurve.length > 0 && (
-              <Paper elevation={3} style={{ padding: '20px' }}>
-                <Typography variant="h6" gutterBottom>
-                  Infection Curve
-                </Typography>
-                <LineChart
-                  width={500}
-                  height={300}
-                  data={infectionCurve.map((value, index) => ({
-                    day: index,
-                    infections: value,
-                  }))}
-                  margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis
-                    dataKey="day"
-                    label={{ value: 'Day', position: 'insideBottomRight', offset: -5 }}
-                  />
-                  <YAxis
-                    label={{ value: 'Infections', angle: -90, position: 'insideLeft' }}
-                  />
-                  <RechartsTooltip
-                    contentStyle={{ backgroundColor: '#f5f5f5', borderRadius: '10px' }}
-                    itemStyle={{ color: '#1976d2' }}
-                  />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="infections"
-                    stroke="#1976d2"
-                    activeDot={{ r: 8 }}
-                    animationDuration={1500}
-                  />
-                </LineChart>
-              </Paper>
+          {/* Infection Curve Chart and Simulation Summary */}
+          <Grid item xs={12} md={8}>
+            {infectionCurve && infectionCurve.length > 0 && (
+              <>
+                <InfectionChart infectionCurve={infectionCurve} summary={summary} />
+                <VerboseLogs verboseLogs={verboseLogs} />
+              </>
             )}
           </Grid>
         </Grid>
       </Container>
 
       {/* Footer */}
-      <footer style={{ marginTop: '20px', padding: '10px', textAlign: 'center' }}>
+      <StyledFooter>
         <Typography variant="body2" color="textSecondary">
-          Disease Simulation App
+          Disease Simulation App &copy; 2024 Johnny Diaz
         </Typography>
-      </footer>
+      </StyledFooter>
     </>
   );
 }
